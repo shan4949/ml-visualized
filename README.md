@@ -23,8 +23,8 @@ Every notebook runs on the **free Colab tier**. Click a badge and choose `Runtim
 | # | Notebook | What you build / see | Open |
 |---|---|---|---|
 | 00 | **Roadmap** | model → loss → optimizer on apartment rents; you vs. gradient descent; overfitting; map of the series | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/00_roadmap.ipynb) |
-| 01 | **Linear algebra** | matrices as transformations of space, eigenvectors, PSD bowls vs. saddles, the SVD animated, image compression, the normal equation | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/01_linear_algebra.ipynb) 🚧 |
-| 02 | **Probability & statistics** | law of large numbers, CLT, Bayes' rule, covariance ellipses, MLE, MAP, and how every loss function comes from a likelihood | 🔜 coming soon |
+| 01 | **Linear algebra** | matrices as transformations of space, eigenvectors, PSD bowls vs. saddles, the SVD animated, image compression, the normal equation | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/01_linear_algebra.ipynb) |
+| 02 | **Probability & statistics** | law of large numbers, CLT, Bayes' rule, covariance ellipses, MLE, MAP, and how every loss function comes from a likelihood | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/02_probability_statistics.ipynb) 🚧 |
 | 03 | **Optimization** | random search → gradient descent → adaptive step sizes → SGD → Momentum/RMSProp/Adam racing on Rosenbrock; conditioning, convexity, KKT and duality | 🔜 coming soon |
 | 04 | **Gradients & backprop from zero** | a micrograd-style autograd engine, computation graphs, the CX 4240 lecture network by hand, an MLP trained on moons, gradient checking, vectorized backprop vs. PyTorch | 🔜 coming soon |
 
