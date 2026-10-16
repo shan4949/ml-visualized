@@ -28,7 +28,7 @@ Every notebook runs on the **free Colab tier**. Click a badge and choose `Runtim
 | 03 | **Optimization** | random search → gradient descent → adaptive step sizes → SGD → Momentum/RMSProp/Adam racing on Rosenbrock; conditioning, convexity, KKT and duality | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/03_optimization.ipynb) |
 | 04 | **Gradients & backprop from zero** | a micrograd-style autograd engine, computation graphs, the CX 4240 lecture network by hand, an MLP trained on moons, gradient checking, vectorized backprop vs. PyTorch | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/04_gradients_backprop.ipynb) |
 
-### Part 1 — Classical supervised learning 🚧 *(in progress)*
+### Part 1 — Classical supervised learning ✅
 
 | # | Notebook | What you build / see | Open |
 |---|---|---|---|
@@ -40,7 +40,7 @@ Every notebook runs on the **free Colab tier**. Click a badge and choose `Runtim
 | 10 | **KNN & classifier evaluation** | KNN from scratch, the curse of dimensionality, confusion matrices, precision/recall/F1, ROC and PR curves built step by step, cost-based thresholds, calibration | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/10_knn_evaluation.ipynb) |
 | 11 | **Support vector machines** | maximum margin, the dual and support vectors, soft margins as hinge loss, Pegasos, the kernel trick lifted to 3-D, an RBF SVM solved from scratch | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/11_svm.ipynb) |
 | 12 | **Decision trees & random forests** | CART split search by hand and in code, Gini vs. entropy, pruning, the bootstrap, bagging and random forests from scratch, OOB error, importance pitfalls | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/12_trees_forests.ipynb) |
-| 13 | **Boosting** | AdaBoost round by round, the exponential-loss derivation, margins, label noise, gradient boosting as fitting residuals, shrinkage and early stopping | 🔜 coming soon |
+| 13 | **Boosting** | AdaBoost round by round, the exponential-loss derivation, margins, label noise, gradient boosting as fitting residuals, shrinkage and early stopping | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/13_boosting.ipynb) |
 
 ### Part 2 — Classical unsupervised learning *(coming soon)*
 
