@@ -52,14 +52,14 @@ Every notebook runs on the **free Colab tier**. Click a badge and choose `Runtim
 | 17 | **Recommender systems** | a sparse rating matrix, alternating least squares by hand, matrix factorization with biases, learned genre embeddings, cosine vs. Pearson collaborative filtering, ranking metrics and their biases | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/17_recommender_systems.ipynb) |
 | 18 | **Anomaly detection** | Mahalanobis distance and χ² thresholds, robust covariance (MCD), KDE, the one-class SVM dual from scratch, isolation forests, novelty detection compared, CUSUM change points, network changes | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/18_anomaly_detection.ipynb) |
 
-### Part 3 — Deep learning 🚧 *(in progress)*
+### Part 3 — Deep learning ✅
 
 | # | Notebook | What you build / see | Open |
 |---|---|---|---|
 | 19 | **Neural networks** | XOR and the perceptron learning rule, stacked perceptrons, universal approximation with sigmoid bumps, an MLP with backprop in NumPy, hidden layers bending space, vanishing gradients, weight decay | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/19_neural_networks.ipynb) |
 | 20 | **PyTorch essentials** | tensors and autograd checked against hand derivations, linear regression four ways, `nn.Module`, Fashion-MNIST data loaders, the training loop, optimizers and LR range tests, dropout/BN, debugging by overfitting one batch | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/20_pytorch_essentials.ipynb) |
 | 21 | **Convolutional neural networks** | the pixel-shuffle test, convolution animated and built with im2col, padding/stride, pooling, a CNN vs. an MLP, learned filters and feature maps, receptive fields, augmentation, residual networks, saliency and occlusion | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/21_cnns.ipynb) |
-| 22 | **RNNs & LSTMs** | an RNN cell from scratch, backprop through time, vanishing/exploding gradients and clipping, the LSTM conveyor belt and gates, a long-memory test, forecasting, a character-level Shakespeare model | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/22_rnns_lstms.ipynb) 🚧 |
+| 22 | **RNNs & LSTMs** | an RNN cell from scratch, backprop through time, vanishing/exploding gradients and clipping, the LSTM conveyor belt and gates, a long-memory test, forecasting, a character-level Shakespeare model | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/22_rnns_lstms.ipynb) |
 
 ### Part 4 — Deep generative & representation learning *(coming soon)*
 
