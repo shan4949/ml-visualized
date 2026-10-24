@@ -1,0 +1,579 @@
+##MD
+{{BADGE:21_cnns}}
+
+# 21 · Convolutional Neural Networks: Building In What We Know About Images
+
+**Part 3 — Deep learning** · Notebook 21 of 27
+
+An MLP looks at an image as a list of 784 unrelated numbers. Shuffle the pixels, the same way for every image, and the MLP doesn't care: it learns just as well, because it never used the fact that neighboring pixels belong together. That's a lot of wasted knowledge. We *know* two things about images: **local patterns matter** (edges, corners, textures are made of nearby pixels), and **a pattern means the same thing wherever it appears** (an edge in the top-left corner is still an edge in the bottom-right).
+
+A **convolutional neural network** (CNN) builds both facts into its architecture. Instead of connecting every pixel to every unit, it slides small learned filters across the image, reusing the same weights everywhere. The result has far fewer parameters, learns faster from less data, and handles shifted inputs gracefully. CNNs started the deep learning boom in 2012 and are still the workhorse of image processing.
+
+**What you'll learn**
+
+1. The pixel-shuffle test: what an MLP ignores
+2. Convolution from scratch: sliding a filter, edge detectors
+3. Padding, stride, and the output-size formula
+4. Convolution layers: channels, filters, parameters
+5. Pooling and (approximate) translation invariance
+6. A CNN for Fashion-MNIST, compared with the MLP
+7. What the filters learn, and what the feature maps show
+8. Receptive fields: seeing more with depth
+9. Data augmentation
+10. Deeper networks: VGG blocks, batch norm, and **residual connections**
+11. What is the network looking at? Saliency and occlusion
+
+*Course map: CX 4240 lecture 12 (convolutional neural networks: MLPs ruin spatial structure, convolution layers, filters, padding and stride, activation maps, max and mean pooling, the full CNN pipeline) and ISYE 4600 W10 (convolution layers and features, pooling, translation invariance and parameter efficiency, AlexNet and ImageNet, residual networks).*
+
+##CODE
+{{SETUP}}
+import torch, torch.nn as nn, torch.nn.functional as F
+import time, gzip, os, urllib.request
+from sklearn.datasets import load_sample_image
+torch.manual_seed(0)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"PyTorch {torch.__version__} on {device}")
+
+FMNIST_URL = "https://raw.githubusercontent.com/zalandoresearch/fashion-mnist/master/data/fashion/"
+CLASSES = ["T-shirt/top", "Trouser", "Pullover", "Dress", "Coat", "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"]
+def load_fashion_mnist(root="data/fashion"):
+    os.makedirs(root, exist_ok=True); out = {}
+    for split, prefix in [("train", "train"), ("test", "t10k")]:
+        for kind, offset in [("images", 16), ("labels", 8)]:
+            fname = f"{prefix}-{kind}-idx{3 if kind == 'images' else 1}-ubyte.gz"; path = os.path.join(root, fname)
+            if not os.path.exists(path): urllib.request.urlretrieve(FMNIST_URL + fname, path)
+            out[(split, kind)] = np.frombuffer(gzip.open(path).read(), np.uint8, offset=offset)
+    return (out[("train", "images")].reshape(-1, 1, 28, 28), out[("train", "labels")],
+            out[("test", "images")].reshape(-1, 1, 28, 28), out[("test", "labels")])
+print("Ready ✓")
+
+##MD
+We reuse notebook 20's data pipeline and training loop. As before, the default trains on a 20,000-image subset so it runs in a few minutes on a CPU; on a GPU runtime set `N_TRAIN = 55000`.
+
+##CODE
+from torch.utils.data import TensorDataset, DataLoader
+Xtr_all, ytr_all, Xte_np, yte_np = load_fashion_mnist()
+N_TRAIN = 20000                                  # 55000 on a GPU runtime
+perm = np.random.default_rng(0).permutation(len(Xtr_all)); val_idx, tr_idx = perm[:5000], perm[5000:5000 + N_TRAIN]
+mean, std = Xtr_all[tr_idx].mean() / 255, Xtr_all[tr_idx].std() / 255
+to_tensor = lambda X: (torch.tensor(X, dtype=torch.float32) / 255 - mean) / std
+Xtr_t, ytr_t = to_tensor(Xtr_all[tr_idx]), torch.tensor(ytr_all[tr_idx], dtype=torch.long)
+Xva_t, yva_t = to_tensor(Xtr_all[val_idx]), torch.tensor(ytr_all[val_idx], dtype=torch.long)
+Xte_t, yte_t = to_tensor(Xte_np), torch.tensor(yte_np, dtype=torch.long)
+val_dl, test_dl = DataLoader(TensorDataset(Xva_t, yva_t), batch_size=1000), DataLoader(TensorDataset(Xte_t, yte_t), batch_size=1000)
+
+def evaluate(model, dl):
+    model.eval(); correct, total, loss_sum = 0, 0, 0.0
+    with torch.no_grad():
+        for xb, yb in dl:
+            xb, yb = xb.to(device), yb.to(device); out = model(xb)
+            loss_sum += F.cross_entropy(out, yb, reduction="sum").item(); correct += (out.argmax(1) == yb).sum().item(); total += len(yb)
+    return loss_sum / total, correct / total
+
+def fit(model, X, y, epochs=6, lr=2e-3, wd=1e-4, batch=128, augment=None, verbose=True, seed=0, val=None):
+    torch.manual_seed(seed); model.to(device)
+    dl = DataLoader(TensorDataset(X, y), batch_size=batch, shuffle=True)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=epochs * len(dl))
+    hist = []
+    for ep in range(epochs):
+        model.train(); t0 = time.time(); tl, n = 0.0, 0
+        for xb, yb in dl:
+            xb, yb = xb.to(device), yb.to(device)
+            if augment is not None: xb = augment(xb)
+            loss = F.cross_entropy(model(xb), yb); opt.zero_grad(); loss.backward(); opt.step(); sched.step()
+            tl += loss.item() * len(yb); n += len(yb)
+        vl, va = evaluate(model, val if val is not None else val_dl)
+        hist.append(dict(epoch=ep + 1, train_loss=tl / n, val_loss=vl, val_acc=va))
+        if verbose: print(f"epoch {ep + 1}: train loss {tl / n:.3f}  val loss {vl:.3f}  val acc {va:.1%}  ({time.time() - t0:.1f}s)")
+    return pd.DataFrame(hist)
+
+n_params = lambda m: sum(p.numel() for p in m.parameters())
+print(f"{len(Xtr_t):,} training images, {len(Xva_t):,} validation, {len(Xte_t):,} test")
+
+##MD
+---
+## 1. The pixel-shuffle test
+
+Pick one random permutation of the 784 pixel positions and apply it to **every** image, training and test alike. To a person the result is noise. To an MLP it's exactly the same problem: its first layer connects every input to every unit, so it has no notion of which pixels are neighbors, and reordering the inputs just reorders its weights.
+
+##CODE
+pix_perm = torch.from_numpy(np.random.default_rng(1).permutation(784))
+shuffle_px = lambda X: X.flatten(1)[:, pix_perm].reshape(-1, 1, 28, 28)
+
+fig, axes = plt.subplots(2, 8, figsize=(13, 3.6))
+for k in range(8):
+    axes[0, k].imshow(Xtr_t[k, 0], cmap="gray_r"); axes[1, k].imshow(shuffle_px(Xtr_t[k:k + 1])[0, 0], cmap="gray_r")
+    axes[0, k].set_title(CLASSES[ytr_t[k]], fontsize=9)
+    for a in axes[:, k]: a.axis("off")
+axes[0, 0].text(-12, 14, "original", rotation=90, va="center"); axes[1, 0].text(-12, 14, "shuffled", rotation=90, va="center")
+plt.show()
+
+mlp_fn = lambda: nn.Sequential(nn.Flatten(), nn.Linear(784, 256), nn.ReLU(), nn.Linear(256, 128), nn.ReLU(), nn.Linear(128, 10))
+small_cnn_fn = lambda: nn.Sequential(nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                                     nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                                     nn.Flatten(), nn.Linear(64 * 7 * 7, 128), nn.ReLU(), nn.Linear(128, 10))
+shuffle_results = {}
+val_shuf = DataLoader(TensorDataset(shuffle_px(Xva_t), yva_t), batch_size=1000)
+for name, fn in [("MLP", mlp_fn), ("CNN", small_cnn_fn)]:
+    a_orig = fit(fn(), Xtr_t, ytr_t, epochs=4, verbose=False).val_acc.iloc[-1]
+    a_shuf = fit(fn(), shuffle_px(Xtr_t), ytr_t, epochs=4, verbose=False, val=val_shuf).val_acc.iloc[-1]
+    shuffle_results[name] = {"original images": a_orig, "pixels shuffled": a_shuf}
+pd.DataFrame(shuffle_results).T.style.format("{:.1%}")
+
+##MD
+The MLP scores essentially the same on shuffled pixels as on real images: it was never using the spatial arrangement at all. The CNN (which we'll build piece by piece below) does clearly better on real images, and on shuffled pixels its advantage disappears: it falls back to MLP level, because its whole design assumes neighboring pixels are related, and that assumption is now false. A model that can't tell an image from noise is wasting information we could have given it for free.
+
+---
+## 2. Convolution from scratch
+
+A **convolution** slides a small grid of weights (a **filter** or **kernel**) over the image. At each position, it multiplies the filter by the patch of pixels under it, element by element, and sums: one output number per position. The output is a new image, the **feature map** (or activation map), that is large wherever the patch resembles the filter (ISYE W10, CX lecture 12):
+
+$$O[i, j] = \sum_{u=-d}^{d}\sum_{v=-d}^{d} I[i + u,\, j + v]\; K[u, v] \;+\; b.$$
+
+(Strictly, this is *cross-correlation*; mathematical convolution flips the kernel first. Deep learning libraries all compute the version above and call it convolution; since the kernel is learned, the flip doesn't matter.)
+
+##CODE
+def conv2d_naive(img, kernel, stride=1, padding=0):
+    """Plain loops, exactly the formula: slide the kernel, multiply, sum."""
+    img = np.pad(img, padding); kh, kw = kernel.shape
+    H = (img.shape[0] - kh) // stride + 1; W = (img.shape[1] - kw) // stride + 1
+    out = np.zeros((H, W))
+    for i in range(H):
+        for j in range(W):
+            patch = img[i * stride:i * stride + kh, j * stride:j * stride + kw]
+            out[i, j] = (patch * kernel).sum()
+    return out
+
+# A tiny example we can follow by eye: a vertical edge
+tiny = np.zeros((6, 6)); tiny[:, 3:] = 1.0
+k_vert = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]], float)       # responds to dark→bright, left to right
+out = conv2d_naive(tiny, k_vert)
+print("input (6×6):\n", tiny.astype(int)); print("\nkernel:\n", k_vert.astype(int)); print("\noutput (4×4):\n", out.astype(int))
+
+##MD
+The output is zero over flat regions and large (3) exactly where the window straddles the edge. Let's watch the sliding happen:
+
+##CODE
+fig, axes = plt.subplots(1, 3, figsize=(13, 4.4), gridspec_kw=dict(width_ratios=[1.4, 0.8, 1]))
+def frame_c(t):
+    for a in axes: a.clear()
+    i, j = divmod(t, 4)
+    axes[0].imshow(tiny, cmap="gray_r", vmin=-0.2, vmax=1.2)
+    for (r, c), v in np.ndenumerate(tiny): axes[0].text(c, r, int(v), ha="center", va="center", color=C["red"] if v else C["muted"])
+    axes[0].add_patch(plt.Rectangle((j - 0.5, i - 0.5), 3, 3, fill=False, ec=C["orange"], lw=3)); axes[0].set_title("input, with the 3×3 window")
+    axes[1].imshow(k_vert, cmap="RdBu_r", vmin=-1.5, vmax=1.5)
+    for (r, c), v in np.ndenumerate(k_vert): axes[1].text(c, r, int(v), ha="center", va="center", fontsize=12)
+    axes[1].set_title("kernel")
+    shown = np.full((4, 4), np.nan); shown.flat[:t + 1] = out.flat[:t + 1]
+    axes[2].imshow(shown, cmap="viridis", vmin=0, vmax=3)
+    for (r, c), v in np.ndenumerate(shown):
+        if not np.isnan(v): axes[2].text(c, r, int(v), ha="center", va="center", color="white" if v < 2 else "k", fontsize=12)
+    axes[2].add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, ec=C["orange"], lw=3))
+    patch = tiny[i:i + 3, j:j + 3]
+    axes[2].set_title(f"output[{i},{j}] = Σ patch × kernel = {int((patch * k_vert).sum())}")
+    for a in axes: a.set_xticks([]); a.set_yticks([]); a.grid(False)
+anim = animation.FuncAnimation(fig, frame_c, frames=16, interval=500)
+show_anim(anim)
+
+##MD
+### Classic hand-designed filters
+
+Before CNNs, computer vision was largely the art of designing filters like these by hand. Here are six classics and their feature maps on a photo:
+
+##CODE
+photo = load_sample_image("china.jpg").mean(2)[::2, ::2] / 255.0        # grayscale, 214 × 320
+filters = {
+    "vertical edges (Sobel x)":   np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], float),
+    "horizontal edges (Sobel y)": np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], float),
+    "blur (box 5×5)":             np.ones((5, 5)) / 25,
+    "sharpen":                    np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], float),
+    "outline (Laplacian)":        np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], float),
+    "diagonal edges":             np.array([[0, 1, 2], [-1, 0, 1], [-2, -1, 0]], float),
+}
+fig, axes = plt.subplots(3, 5, figsize=(17, 8.6), gridspec_kw=dict(width_ratios=[1, 0.32, 1, 1, 0.32]))
+photo_t = torch.tensor(photo, dtype=torch.float32)[None, None]
+for row in range(3):
+    axes[row, 0].axis("off")
+for k, (name, kern) in enumerate(filters.items()):
+    row, col = k // 2, (k % 2) * 3                           # each filter: [kernel | feature map], two per row
+    kax, fax = (axes[row, 1], axes[row, 2]) if col == 0 else (axes[row, 4], axes[row, 3])
+    fmap = F.conv2d(photo_t, torch.tensor(kern, dtype=torch.float32)[None, None], padding=kern.shape[0] // 2)[0, 0].numpy()
+    v = np.abs(kern).max(); kax.imshow(kern, cmap="RdBu_r", vmin=-v, vmax=v); kax.set_title(name, fontsize=9)
+    if kern.shape[0] <= 3:
+        for (r, c), val in np.ndenumerate(kern): kax.text(c, r, f"{val:g}", ha="center", va="center", fontsize=8)
+    smooth = "blur" in name or "sharpen" in name; lim = np.percentile(np.abs(fmap), 99)
+    fax.imshow(fmap, cmap="gray" if smooth else "RdBu_r", vmin=None if smooth else -lim, vmax=None if smooth else lim)
+    kax.axis("off"); fax.axis("off")
+axes[0, 0].imshow(photo, cmap="gray"); axes[0, 0].set_title("input photo")
+fig.suptitle("Six hand-designed 3×3 / 5×5 filters (small panels) and their feature maps on the photo", y=0.99)
+fig.tight_layout(); plt.show()
+
+##MD
+Each filter is a tiny **pattern detector**. The Sobel filters light up along edges of one orientation (red for dark-to-bright, blue for bright-to-dark), the Laplacian finds outlines in every direction, and the box filter blurs. The key idea of a CNN: **don't design the filters, learn them**. A convolution layer is a set of filters whose weights are trained by backpropagation like any other parameters.
+
+---
+## 3. Padding, stride, and the output size
+
+Two knobs control the geometry (CX lecture 12):
+
+- **Padding** $P$: add a border of zeros so the filter can be centered on edge pixels. With $P = (F-1)/2$ the output keeps the input's size ("same" padding).
+- **Stride** $S$: move the filter $S$ pixels at a time instead of 1, shrinking the output.
+
+For an input of width $W$ and a filter of width $F$:
+
+$$W_{\text{out}} = \left\lfloor\frac{W - F + 2P}{S}\right\rfloor + 1.$$
+
+CX's example: a 32 × 32 image with a 5 × 5 filter, no padding, stride 1 gives $(32 - 5)/1 + 1 = 28$. 🎚️ **Try it:**
+
+##CODE
+def geometry(W_in=7, F_=3, P=0, S=1):
+    W_out = (W_in - F_ + 2 * P) // S + 1
+    fig, ax = plt.subplots(figsize=(7, 6))
+    full = W_in + 2 * P
+    for r in range(full):
+        for c in range(full):
+            pad = r < P or c < P or r >= W_in + P or c >= W_in + P
+            ax.add_patch(plt.Rectangle((c, -r), 0.95, 0.95, color=C["light"] if pad else C["blue"], alpha=0.35 if pad else 0.6))
+    if W_out > 0:
+        for (r, c) in [(0, 0), (0, min(1, W_out - 1)), (min(1, W_out - 1), 0)]:
+            ax.add_patch(plt.Rectangle((c * S - 0.05, -r * S - F_ + 1 - 0.05), F_ + 0.05, F_ + 0.05, fill=False, ec=C["orange"] if (r, c) == (0, 0) else C["red"], lw=2.5, ls="-" if (r, c) == (0, 0) else "--"))
+    ax.set(xlim=(-0.5, full + 0.5), ylim=(-full - 0.5, 1.5), aspect="equal", xticks=[], yticks=[])
+    ax.set_title(f"W = {W_in}, F = {F_}, P = {P}, S = {S}  →  output {W_out} × {W_out}\n(blue = image, grey = zero padding, boxes = first filter positions)" if W_out > 0 else "filter larger than the padded input!")
+    ax.grid(False); plt.show()
+
+interact(geometry, W_in=IntSlider(value=7, min=3, max=12, description="input W"), F_=IntSlider(value=3, min=1, max=7, step=2, description="filter F"),
+         P=IntSlider(value=0, min=0, max=3, description="padding P"), S=IntSlider(value=1, min=1, max=3, description="stride S"));
+
+##MD
+---
+## 4. Convolution layers: channels and filters
+
+Real images have **channels** (3 for RGB), and after the first layer every feature map is a channel too. So a filter in a convolution layer spans **all input channels**: for a 32 × 32 × 3 image, a 5 × 5 filter is really 5 × 5 × 3, and it produces one 2-D feature map. A layer has many filters, and their maps stack into the output's channels. CX's example: 6 filters of size 5 × 5 × 3 turn a 3 × 32 × 32 image into a 6 × 28 × 28 output, with $6 \times (5\cdot5\cdot3 + 1) = 456$ parameters (the +1 is each filter's bias). Then an activation (ReLU) is applied to every number.
+
+Let's write a multi-channel convolution with NumPy, vectorized (the "im2col" trick: unroll every patch into a row so the whole convolution becomes one matrix multiplication, which is also how fast libraries do it), and check it against PyTorch's `F.conv2d`:
+
+##CODE
+def conv2d_im2col(x, w, b, stride=1, padding=0):
+    """x: (C_in, H, W), w: (C_out, C_in, k, k), b: (C_out,). Returns (C_out, H_out, W_out)."""
+    C_in, H, W = x.shape; C_out, _, k, _ = w.shape
+    x = np.pad(x, ((0, 0), (padding, padding), (padding, padding)))
+    H_out = (H + 2 * padding - k) // stride + 1; W_out = (W + 2 * padding - k) // stride + 1
+    cols = np.empty((H_out * W_out, C_in * k * k))
+    for i in range(H_out):
+        for j in range(W_out):
+            cols[i * W_out + j] = x[:, i * stride:i * stride + k, j * stride:j * stride + k].ravel()   # one patch per row
+    out = cols @ w.reshape(C_out, -1).T + b                                                       # one big matrix product
+    return out.T.reshape(C_out, H_out, W_out)
+
+r_ = np.random.default_rng(0)
+x_ = r_.normal(size=(3, 32, 32)); w_ = r_.normal(size=(6, 3, 5, 5)); b_ = r_.normal(size=6)
+ours = conv2d_im2col(x_, w_, b_)
+theirs = F.conv2d(torch.tensor(x_)[None], torch.tensor(w_), torch.tensor(b_))[0].numpy()
+print(f"output shape {ours.shape}; max difference from F.conv2d: {np.abs(ours - theirs).max():.2e}")
+print(f"parameters: {w_.size} weights + {b_.size} biases = {w_.size + b_.size}   (CX lecture 12: 6 × (5·5·3 + 1) = 456)")
+
+dense = 3 * 32 * 32 * 6 * 28 * 28
+print(f"a fully connected layer with the same input and output sizes would need {dense:,} weights ({dense // 456:,}× more)")
+
+##MD
+That last line is the payoff of **weight sharing**: the same 456 numbers are reused at all 784 output positions, instead of a separate weight for every input–output pair. Fewer parameters means less data needed and less overfitting, and the sharing is exactly the assumption "a pattern means the same thing anywhere".
+
+---
+## 5. Pooling and translation invariance
+
+**Pooling** shrinks feature maps by summarizing each small window, usually **max pooling** over 2 × 2 windows with stride 2 (CX lecture 12): keep the largest value, halving height and width. Mean pooling averages instead. Pooling has no parameters. It reduces computation for later layers, and it makes the output less sensitive to exactly *where* a feature occurred: if an edge moves by one pixel within a window, the max is unchanged.
+
+##CODE
+fm = np.array([[1, 1, 2, 4], [5, 6, 7, 8], [3, 2, 1, 0], [1, 2, 3, 4]], float)
+mx = F.max_pool2d(torch.tensor(fm)[None, None], 2)[0, 0].numpy(); av = F.avg_pool2d(torch.tensor(fm)[None, None], 2)[0, 0].numpy()
+fig, axes = plt.subplots(1, 3, figsize=(11, 3.6))
+for ax, M_, nm in [(axes[0], fm, "feature map (4×4)"), (axes[1], mx, "max pool 2×2, stride 2"), (axes[2], av, "mean pool 2×2, stride 2")]:
+    ax.imshow(M_, cmap="Blues", vmin=0, vmax=9)
+    for (r, c), v in np.ndenumerate(M_): ax.text(c, r, f"{v:g}", ha="center", va="center", fontsize=13)
+    ax.set(title=nm, xticks=[], yticks=[]); ax.grid(False)
+for k in range(2): axes[0].axhline(1.5, color=C["red"], lw=2); axes[0].axvline(1.5, color=C["red"], lw=2)
+plt.show()
+
+##MD
+This is CX's slide example (the 2 × 2 blocks pool to 6, 8, 3, 4). Strictly, convolution is translation-**equivariant** (shift the input, and the feature map shifts the same way), and pooling plus the final layers add a degree of translation **invariance** (the output barely changes). We'll measure how much in section 6.
+
+---
+## 6. A CNN for Fashion-MNIST
+
+The classic layout (ISYE W10: *"convolution + ReLU → pooling → … → flatten → fully connected → softmax"*): a few convolution blocks that turn the image into a stack of small, many-channel feature maps, then a small MLP that classifies them.
+
+```
+input 1×28×28
+→ conv 3×3, 32 filters, ReLU   → 32×28×28
+→ max pool 2×2                 → 32×14×14
+→ conv 3×3, 64 filters, ReLU   → 64×14×14
+→ max pool 2×2                 → 64×7×7
+→ flatten                      → 3136
+→ linear 128, ReLU, dropout    → 128
+→ linear 10                    → class scores
+```
+
+##CODE
+class SimpleCNN(nn.Module):
+    def __init__(self, c1=32, c2=64, hidden=128, dropout=0.3):
+        super().__init__()
+        self.features = nn.Sequential(nn.Conv2d(1, c1, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                                      nn.Conv2d(c1, c2, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2))
+        self.classifier = nn.Sequential(nn.Flatten(), nn.Linear(c2 * 7 * 7, hidden), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden, 10))
+    def forward(self, x): return self.classifier(self.features(x))
+
+cnn = SimpleCNN()
+x_probe = Xtr_t[:2]
+print("shape after each layer:")
+for layer in list(cnn.features) + list(cnn.classifier):
+    x_probe = layer(x_probe); print(f"  {layer.__class__.__name__:10s} → {tuple(x_probe.shape)}")
+conv_p = n_params(cnn.features); print(f"\nparameters: {n_params(cnn):,} total, of which only {conv_p:,} in the convolution layers")
+
+h_cnn = fit(cnn, Xtr_t, ytr_t, epochs=8)
+h_mlp = fit(mlp_fn(), Xtr_t, ytr_t, epochs=8, verbose=False)
+print(f"\nMLP ({n_params(mlp_fn()):,} params): val acc {h_mlp.val_acc.iloc[-1]:.1%}    CNN ({n_params(cnn):,} params): val acc {h_cnn.val_acc.iloc[-1]:.1%}")
+
+##MD
+The CNN beats the MLP by several points. Almost all of its parameters sit in the first fully connected layer; the two convolution layers that do the actual feature extraction have fewer than 20,000.
+
+### Shifting the test images
+
+How do the two models cope when every test image is shifted sideways by a few pixels (something neither saw during training)?
+
+##CODE
+def shifted_acc(model, dx):
+    model.eval()
+    with torch.no_grad():
+        Xs = torch.roll(Xva_t, shifts=dx, dims=3)
+        if dx > 0: Xs[..., :dx] = Xva_t.min()
+        elif dx < 0: Xs[..., dx:] = Xva_t.min()
+        return (model(Xs.to(device)).argmax(1).cpu() == yva_t).float().mean().item()
+
+mlp_trained = mlp_fn(); fit(mlp_trained, Xtr_t, ytr_t, epochs=8, verbose=False)
+shifts = list(range(-6, 7))
+acc_mlp = [shifted_acc(mlp_trained, d) for d in shifts]; acc_cnn = [shifted_acc(cnn, d) for d in shifts]
+fig, axes = plt.subplots(1, 2, figsize=(14, 4), gridspec_kw=dict(width_ratios=[1, 1.4]))
+ex = Xva_t[3, 0]
+axes[0].imshow(torch.cat([torch.roll(ex, d, 1) for d in (-4, 0, 4)], 1), cmap="gray_r"); axes[0].axis("off"); axes[0].set_title("the same image shifted −4, 0, +4 pixels")
+axes[1].plot(shifts, acc_mlp, "o-", label="MLP"); axes[1].plot(shifts, acc_cnn, "o-", label="CNN")
+axes[1].set(xlabel="horizontal shift of every test image (pixels)", ylabel="validation accuracy", title="Robustness to translation"); axes[1].legend()
+fig.tight_layout(); plt.show()
+
+##MD
+Both models degrade, since neither was trained on shifted images, but the CNN degrades far more gracefully: its filters still fire on the shifted edges and textures, just in different places, and pooling absorbs small offsets. For the MLP, a shift moves every feature onto weights that were trained for different pixels. (Section 9 makes the CNN more robust still.)
+
+---
+## 7. What the filters learn, and what the feature maps show
+
+The first layer's 32 filters are 3 × 3 weight grids we can draw. More revealing are the **feature maps**: what each filter's output looks like on a real image.
+
+##CODE
+w1 = cnn.features[0].weight.detach().cpu()[:, 0]
+img_i = 7; xin = Xva_t[img_i:img_i + 1].to(device)
+cnn.eval()
+with torch.no_grad():
+    a1 = cnn.features[1](cnn.features[0](xin))[0].cpu()           # after conv1 + ReLU: 32 × 28 × 28
+    a2 = cnn.features[4](cnn.features[3](cnn.features[2](cnn.features[1](cnn.features[0](xin)))))[0].cpu()   # after conv2 + ReLU: 64 × 14 × 14
+fig = plt.figure(figsize=(17, 7.4))
+gs_ = fig.add_gridspec(4, 17, wspace=0.15, hspace=0.3)
+ax = fig.add_subplot(gs_[0:2, 0:3]); ax.imshow(Xva_t[img_i, 0], cmap="gray_r"); ax.axis("off"); ax.set_title(f"input: {CLASSES[yva_t[img_i]]}")
+for k in range(14):
+    v = w1[k].abs().max(); ax = fig.add_subplot(gs_[0, 3 + k]); ax.imshow(w1[k], cmap="RdBu_r", vmin=-v, vmax=v); ax.axis("off")
+    ax = fig.add_subplot(gs_[1, 3 + k]); ax.imshow(a1[k], cmap="magma"); ax.axis("off")
+for k in range(17):
+    ax = fig.add_subplot(gs_[2, k]); ax.imshow(a2[k], cmap="magma"); ax.axis("off")
+    ax = fig.add_subplot(gs_[3, k]); ax.imshow(a2[17 + k], cmap="magma"); ax.axis("off")
+fig.text(0.6, 0.905, "layer 1: 14 of the 32 learned 3×3 filters (top) and their feature maps on this image (below)", ha="center", fontsize=10)
+fig.text(0.5, 0.49, "layer 2: 34 of the 64 feature maps (14 × 14): combinations of layer-1 features", ha="center", fontsize=10)
+plt.show()
+
+##MD
+The learned first-layer filters look much like the hand-designed ones from section 2: oriented edge detectors (a red side and a blue side), center–surround blobs, intensity detectors. Their feature maps highlight the item's outline from different sides, its interior, or the background. The second layer's maps are coarser (after pooling) and more abstract: each responds to a *combination* of first-layer features, such as a collar region, a sleeve edge, or the gap between trouser legs. Deeper networks continue this hierarchy: edges → textures and corners → parts → objects (ISYE W10: *"combinations of edges → object models"*).
+
+---
+## 8. Receptive fields: seeing more with depth
+
+Each unit in the first conv layer sees a 3 × 3 patch of the input: its **receptive field**. A unit in the second layer sees a 3 × 3 patch of first-layer maps, each of which saw 3 × 3 pixels, so it sees 5 × 5 pixels; pooling doubles the reach of everything after it. Small filters stacked deep cover large regions while keeping parameters low (two 3 × 3 layers see as far as one 5 × 5 layer, with $2 \cdot 9 = 18$ instead of 25 weights per channel pair, plus an extra nonlinearity). We can measure the receptive field empirically: backpropagate from one unit in the middle of a layer's output and see which input pixels have nonzero gradient.
+
+##CODE
+def receptive_field(layers, upto):
+    x = torch.zeros(1, 1, 28, 28, requires_grad=True); a = x
+    for l in layers[:upto]: a = l(a)
+    c = a.shape[-1] // 2; a[0, :, c, c].sum().backward()
+    g = (x.grad[0, 0].abs() > 0).float(); rows = torch.nonzero(g.sum(1)).flatten()
+    return g, (rows.max() - rows.min() + 1).item() if len(rows) else 0
+
+probe = SimpleCNN(); probe.eval()
+for p in probe.parameters(): nn.init.constant_(p, 0.1)                # positive weights: every connected path has a nonzero gradient
+layers = [nn.AvgPool2d(2) if isinstance(l, nn.MaxPool2d) else l for l in probe.features]   # max-pool sends gradient to one pixel only; average pooling shows everything that *can* matter
+stages = [(1, "after conv1"), (3, "after conv1 + pool"), (4, "after conv2"), (6, "after conv2 + pool")]
+fig, axes = plt.subplots(1, 4, figsize=(15, 3.8))
+for ax, (upto, nm) in zip(axes, stages):
+    g, size = receptive_field(layers, upto)
+    ax.imshow(Xva_t[img_i, 0], cmap="gray_r", alpha=0.35); ax.imshow(g, cmap="Reds", alpha=0.6)
+    ax.set(title=f"{nm}: {size}×{size} pixels"); ax.axis("off")
+fig.suptitle("Input pixels that can influence one unit at the center of each layer's output", y=1.02); plt.show()
+
+##MD
+---
+## 9. Data augmentation
+
+A CNN is translation-equivariant by design but only partly invariant, and it knows nothing about other natural variations (small rotations, flips, scale). **Data augmentation** teaches those by example: during training, randomly transform each batch (flip, shift, crop, rotate slightly) in ways that don't change the label. The model sees a different version of every image each epoch, which acts as a powerful regularizer, especially when data is scarce. Let's train on just **5,000** images, with and without random flips and shifts:
+
+##CODE
+def augment(xb, max_shift=2):
+    """Random horizontal flip + random shift of up to max_shift pixels, independently for every image."""
+    flip = torch.rand(len(xb), device=xb.device) < 0.5
+    xb = torch.where(flip[:, None, None, None], xb.flip(3), xb)       # clothes are left-right symmetric
+    padded = F.pad(xb, (max_shift,) * 4, value=float(xb.min()))       # pad with background, then crop a random 28×28 window
+    dx, dy = torch.randint(0, 2 * max_shift + 1, (2, len(xb)))
+    return torch.stack([padded[k, :, dy[k]:dy[k] + 28, dx[k]:dx[k] + 28] for k in range(len(xb))])
+
+aug_models, aug_hist = {}, {}
+for name, aug in [("no augmentation", None), ("random flips + shifts", augment)]:
+    aug_models[name] = SimpleCNN(); aug_hist[name] = fit(aug_models[name], Xtr_t[:5000], ytr_t[:5000], epochs=30, augment=aug, verbose=False)
+    print(f"{name:24s}: final val acc {aug_hist[name].val_acc.iloc[-1]:.1%}, train loss {aug_hist[name].train_loss.iloc[-1]:.3f}, val loss {aug_hist[name].val_loss.iloc[-1]:.3f}")
+fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+for (name, h), col in zip(aug_hist.items(), [C["red"], C["blue"]]):
+    axes[0].plot(h.epoch, h.train_loss, "--", color=col); axes[0].plot(h.epoch, h.val_loss, "-", color=col, label=name)
+    axes[1].plot(shifts, [shifted_acc(aug_models[name], d) for d in shifts], "o-", color=col, label=name)
+axes[0].set(xlabel="epoch", ylabel="loss", title="validation (solid) vs training (dashed) loss, 5,000 images"); axes[0].legend()
+axes[1].set(xlabel="horizontal shift of every validation image (pixels)", ylabel="validation accuracy", title="robustness to shifts"); axes[1].legend()
+fig.tight_layout(); plt.show()
+
+##MD
+With augmentation, training is harder (the dashed training loss stays higher, since each epoch brings "new" versions of every image) and the gap between training and validation loss shrinks. On the clean validation set the two models end up about equally accurate: Fashion-MNIST photos are centered and consistently oriented, so the validation images rarely look like the augmented ones. The payoff shows on the right: the augmented model is far more robust to shifts it was taught to ignore. Whether augmentation raises test accuracy depends on whether the test data actually varies in the ways you augment for; on real-world photos (varied framing, lighting, orientation) it usually does, and it's one of the most effective tools in practice. So augmentation is how you encode *invariances you know the task has* without changing the architecture; choosing them is a modeling decision (a horizontal flip is fine for clothing, wrong for digits like 2 vs. 5 or for text).
+
+---
+## 10. Deeper networks: VGG blocks, batch norm, residual connections
+
+The history of image classification on **ImageNet** (1.3 million photos, 1,000 classes; ISYE W10) is largely a history of going deeper:
+
+| Year | Network | Depth | Key idea | Top-5 error |
+|---|---|---|---|---|
+| 2012 | AlexNet | 8 | ReLU, dropout, GPUs | 15.3% |
+| 2014 | VGG | 16–19 | stacks of 3 × 3 convolutions | 7.3% |
+| 2014 | GoogLeNet | 22 | parallel filter sizes (Inception) | 6.7% |
+| 2015 | **ResNet** | 152 | **residual connections** | 3.6% |
+
+Simply stacking more layers stops working past a certain depth: a 56-layer plain network trains to a *higher training error* than a 20-layer one (He et al., 2015). That's not overfitting; it's an optimization problem (vanishing gradients, notebook 19). The **residual block** fixes it by learning a correction to the identity:
+
+$$\text{output} = \text{ReLU}\big(x + f(x)\big), \qquad f = \text{conv} \to \text{BN} \to \text{ReLU} \to \text{conv} \to \text{BN}.$$
+
+If the best thing a block can do is nothing, it just learns $f \approx 0$. And the gradient has a direct path back through the "+ x" shortcut, so very deep stacks stay trainable. Let's compare plain and residual networks of the same depth on our data:
+
+##CODE
+class Block(nn.Module):
+    def __init__(self, ch, residual=True, bn=True):
+        super().__init__(); self.residual = residual
+        norm = (lambda: nn.BatchNorm2d(ch)) if bn else (lambda: nn.Identity())
+        self.f = nn.Sequential(nn.Conv2d(ch, ch, 3, padding=1), norm(), nn.ReLU(), nn.Conv2d(ch, ch, 3, padding=1), norm())
+    def forward(self, x): return F.relu(x + self.f(x)) if self.residual else F.relu(self.f(x))
+
+class DeepNet(nn.Module):
+    def __init__(self, n_blocks=16, ch=32, residual=True, bn=False):
+        super().__init__()
+        self.stem = nn.Sequential(nn.Conv2d(1, ch, 3, padding=1), nn.ReLU())
+        self.blocks = nn.Sequential(*[Block(ch, residual, bn) for _ in range(n_blocks // 2)], nn.MaxPool2d(2),
+                                    *[Block(ch, residual, bn) for _ in range(n_blocks - n_blocks // 2)], nn.MaxPool2d(2))
+        self.head = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(ch, 10))   # global average pooling
+    def forward(self, x): return self.head(self.blocks(self.stem(x)))
+
+deep_hist = {}
+for res in [False, True]:
+    name = f"{'residual' if res else 'plain'}, 34 layers"
+    net = DeepNet(n_blocks=16, residual=res)
+    deep_hist[name] = fit(net, Xtr_t[:6000], ytr_t[:6000], epochs=3, lr=1e-3, verbose=False)
+    print(f"{name}: {n_params(net):,} parameters, training loss by epoch {deep_hist[name].train_loss.round(3).tolist()}, val acc {deep_hist[name].val_acc.iloc[-1]:.1%}")
+
+def grad_norms_at_init(residual, n_blocks=16):
+    torch.manual_seed(0); net = DeepNet(n_blocks=n_blocks, residual=residual); net.train()
+    F.cross_entropy(net(Xtr_t[:64]), ytr_t[:64]).backward()
+    return [blk.f[0].weight.grad.norm().item() for blk in net.blocks if isinstance(blk, Block)]
+fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+for (name, h), col in zip(deep_hist.items(), [C["red"], C["blue"]]):
+    axes[0].plot(h.epoch, h.train_loss, "o-", color=col, label=name)
+axes[0].axhline(np.log(10), color=C["muted"], ls=":", label="log 10 (chance)"); axes[0].set(xlabel="epoch", ylabel="training loss", title="training loss (6,000 images, no batch norm)"); axes[0].legend()
+for res, col in [(False, C["red"]), (True, C["blue"])]:
+    axes[1].semilogy(range(1, 17), grad_norms_at_init(res), "o-", color=col, label="residual" if res else "plain")
+axes[1].set(xlabel="block (1 = nearest the input)", ylabel="gradient norm of the block's first conv", title="gradient reaching each block at initialization"); axes[1].legend()
+fig.tight_layout(); plt.show()
+
+##MD
+The plain 34-layer network doesn't learn at all: its loss sits at $\log 10$, chance level, for every epoch. The residual network with the very same layers and parameters trains normally. The right panel shows why: in the plain network the gradient shrinks by orders of magnitude on its way back through the blocks, so the early layers get no signal; the shortcuts deliver a usable gradient to every block. (We left out batch normalization here to isolate the effect. With batch norm, as in real ResNets, plain networks of moderate depth do train, which is part of why BN mattered so much in 2015; at greater depths the residual connections still win.) `DeepNet` also uses **global average pooling** (average each final feature map to one number) instead of a big fully connected layer, which cuts parameters dramatically.
+
+> 🤔 **Question: Do people still train CNNs from scratch?**
+>
+> For new image tasks, usually not. The standard practice is **transfer learning**: take a network pretrained on ImageNet (available in `torchvision.models` with one line), replace its last layer with one for your classes, and fine-tune on your data. The early layers' edge and texture detectors are useful for almost any image task, so a few hundred labeled images can be enough. Since about 2020, **vision transformers** (notebook 25's architecture applied to image patches) compete with CNNs at large scale, and the best modern CNNs (ConvNeXt) borrowed ideas back from them.
+
+---
+## 11. What is the network looking at?
+
+Two simple ways to ask a trained CNN which pixels mattered for a decision:
+
+- **Saliency map** (Simonyan et al., 2013): the gradient of the predicted class's score with respect to the input pixels. Large magnitude = changing this pixel would change the score most.
+- **Occlusion** (Zeiler & Fergus, 2014): slide a gray patch over the image and record how much the correct class's probability drops. Large drop = the network relied on that region.
+
+##CODE
+cnn.eval()
+picks = [int(np.flatnonzero(yva_t.numpy() == c)[0]) for c in (0, 1, 7, 8, 9)]
+fig, axes = plt.subplots(3, 5, figsize=(14, 8.2))
+for col, i in enumerate(picks):
+    x = Xva_t[i:i + 1].clone().to(device).requires_grad_(True)
+    score = cnn(x)[0, yva_t[i]]; score.backward()
+    sal = x.grad[0, 0].abs().cpu()
+    with torch.no_grad():
+        base = F.softmax(cnn(x), 1)[0, yva_t[i]].item(); occ = np.zeros((28, 28)); cnt = np.zeros((28, 28))
+        for r in range(0, 22, 2):
+            for c in range(0, 22, 2):
+                xo = x.detach().clone(); xo[..., r:r + 7, c:c + 7] = 0.0
+                drop = base - F.softmax(cnn(xo), 1)[0, yva_t[i]].item(); occ[r:r + 7, c:c + 7] += drop; cnt[r:r + 7, c:c + 7] += 1
+        occ /= np.maximum(cnt, 1)
+    axes[0, col].imshow(Xva_t[i, 0], cmap="gray_r"); axes[0, col].set_title(f"{CLASSES[yva_t[i]]} (p = {base:.2f})", fontsize=10)
+    axes[1, col].imshow(sal, cmap="hot"); axes[2, col].imshow(occ, cmap="RdBu_r", vmin=-np.abs(occ).max(), vmax=np.abs(occ).max())
+    for a in axes[:, col]: a.axis("off")
+axes[1, 0].text(-6, 14, "saliency\n|∂score/∂pixel|", ha="right", va="center", fontsize=10); axes[2, 0].text(-6, 14, "occlusion:\nprob. drop\nwhen hidden", ha="right", va="center", fontsize=10)
+plt.show()
+
+##MD
+The two methods tell different stories, which is itself a lesson. The raw-gradient saliency maps are speckled all over the image, including the background: single-pixel gradients of a ReLU network are notoriously noisy (refinements such as SmoothGrad average them over many noisy copies of the input, and integrated gradients average along a path from a blank image). Occlusion is coarser but far easier to read: hiding a specific region (red) costs the most probability, such as the bag's handle area, the sneaker's toe, or the boot's heel. Such maps are useful sanity checks (a model that relies on the background or a watermark is cheating), but they should be read with care: different attribution methods can disagree, and none is guaranteed to reflect what the model truly relies on.
+
+---
+## 12. Summary
+
+| Idea | What it builds in | Effect |
+|---|---|---|
+| **Local filters** | patterns are made of nearby pixels | few weights per filter |
+| **Weight sharing** | a pattern means the same thing anywhere | translation equivariance; tens of thousands of times fewer parameters than dense layers |
+| **Pooling** | exact position matters less than presence | smaller maps, partial invariance |
+| **Depth** | features are hierarchical (edges → parts → objects) | large receptive fields with small filters |
+| **Augmentation** | known invariances (shifts, flips…) | regularization, robustness |
+| **Residual connections** | layers learn corrections to the identity | very deep networks trainable |
+
+**Output size:** $W_{\text{out}} = \lfloor(W - F + 2P)/S\rfloor + 1$. **Parameters of a conv layer:** $C_{\text{out}}(C_{\text{in}}F^2 + 1)$.
+
+The same idea, a layer whose structure matches the structure of the data, drives the next notebook: **recurrent networks** share weights across **time** instead of space.
+
+### ✏️ Exercises
+
+1. Compute by hand the output size and parameter count of every layer in `SimpleCNN`, then check them against the printout.
+2. Implement max pooling and its backward pass in NumPy (the gradient flows only to the max element of each window). Verify against `F.max_pool2d` with autograd.
+3. Initialize the first conv layer of `SimpleCNN` with the six hand-designed filters from section 2 (plus random ones) and freeze them. How does accuracy compare with learning all filters?
+4. Remove the pooling layers from `SimpleCNN` (use stride-2 convolutions instead) and compare accuracy and shift robustness.
+5. Add random rotations of ±10° to the augmentation (`torchvision.transforms.functional.rotate`). Does it help on 5,000 images?
+6. Rebuild `DeepNet` with 34 layers and compare plain vs. residual training loss over 5 epochs. How does the gap change with depth?
+7. Transfer learning: load `torchvision.models.resnet18(weights="DEFAULT")` (needs internet), adapt its first layer to 1 channel (or repeat the gray channel three times) and its last layer to 10 classes, and fine-tune on 1,000 Fashion-MNIST images. Compare with `SimpleCNN` trained from scratch on the same 1,000.
+
+### References
+
+- CX 4240 lecture 12 (Convolutional Neural Networks); ISYE 4600 W10.
+- Y. LeCun, L. Bottou, Y. Bengio & P. Haffner, *Gradient-Based Learning Applied to Document Recognition*, Proc. IEEE (1998) (LeNet).
+- A. Krizhevsky, I. Sutskever & G. Hinton, *ImageNet Classification with Deep Convolutional Neural Networks*, NeurIPS (2012).
+- K. Simonyan & A. Zisserman, *Very Deep Convolutional Networks for Large-Scale Image Recognition* (2014) (VGG).
+- K. He, X. Zhang, S. Ren & J. Sun, *Deep Residual Learning for Image Recognition*, CVPR (2016).
+- M. Zeiler & R. Fergus, *Visualizing and Understanding Convolutional Networks*, ECCV (2014); K. Simonyan, A. Vedaldi & A. Zisserman, *Deep Inside Convolutional Networks: Visualising Image Classification Models and Saliency Maps* (2013).
+- V. Dumoulin & F. Visin, *A guide to convolution arithmetic for deep learning* (2016).
+- H. Xiao, K. Rasul & R. Vollgraf, *Fashion-MNIST* (2017).
+
+**Next → [22 · RNNs & LSTMs](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/22_rnns_lstms.ipynb)**
