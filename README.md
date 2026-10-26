@@ -61,9 +61,12 @@ Every notebook runs on the **free Colab tier**. Click a badge and choose `Runtim
 | 21 | **Convolutional neural networks** | the pixel-shuffle test, convolution animated and built with im2col, padding/stride, pooling, a CNN vs. an MLP, learned filters and feature maps, receptive fields, augmentation, residual networks, saliency and occlusion | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/21_cnns.ipynb) |
 | 22 | **RNNs & LSTMs** | an RNN cell from scratch, backprop through time, vanishing/exploding gradients and clipping, the LSTM conveyor belt and gates, a long-memory test, forecasting, a character-level Shakespeare model | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/22_rnns_lstms.ipynb) |
 
-### Part 4 — Deep generative & representation learning *(coming soon)*
+### Part 4 — Deep generative & representation learning 🚧 *(in progress)*
 
-23 Variational autoencoders · 24 Contrastive learning (SimCLR)
+| # | Notebook | What you build / see | Open |
+|---|---|---|---|
+| 23 | **Variational autoencoders** | why the likelihood is intractable, an autoencoder's 2-D code, the ELBO and its closed-form KL, the reparameterization trick vs. score-function gradients, a VAE on Fashion-MNIST, latent maps, sampling, interpolation, β-VAE | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/23_vae.ipynb) 🚧 |
+| 24 | **Contrastive learning (SimCLR)** | linear probes, data augmentation as the source of supervision, the NT-Xent loss and its temperature, training SimCLR from scratch, label-efficiency curves, robustness to shifted inputs | 🔜 coming soon |
 
 ### Part 5 — Transformers & LLMs *(coming soon)*
 
