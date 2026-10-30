@@ -68,9 +68,12 @@ Every notebook runs on the **free Colab tier**. Click a badge and choose `Runtim
 | 23 | **Variational autoencoders** | why the likelihood is intractable, an autoencoder's 2-D code, the ELBO and its closed-form KL, the reparameterization trick vs. score-function gradients, a VAE on Fashion-MNIST, latent maps, sampling, interpolation, β-VAE | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/23_vae.ipynb) |
 | 24 | **Contrastive learning (SimCLR)** | linear probes, data augmentation as the source of supervision, the NT-Xent loss and its temperature, training SimCLR from scratch, label-efficiency curves, robustness to shifted inputs | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/24_contrastive_learning.ipynb) |
 
-### Part 5 — Transformers & LLMs *(coming soon)*
+### Part 5 — Transformers & LLMs 🚧 *(in progress)*
 
-25 Attention & a mini-GPT from scratch · 26 LLM post-training (SFT, RLHF, DPO, GRPO)
+| # | Notebook | What you build / see | Open |
+|---|---|---|---|
+| 25 | **Attention & a mini-GPT from scratch** | a bigram baseline, self-attention as weighted averaging, scaled dot-product and multi-head attention, transformer blocks, a character-level GPT on Shakespeare, attention maps, byte-pair encoding, scaling | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/25_attention_mini_gpt.ipynb) |
+| 26 | **LLM post-training** | a reinforcement-learning primer, a tiny pretrained model fixed by SFT, a Bradley–Terry reward model, RLHF with PPO and a KL leash, DPO, GRPO with verifiable rewards, reward hacking | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/shan4949/ml-visualized/blob/main/notebooks/26_llm_post_training.ipynb) 🚧 |
 
 ## Running locally
 
